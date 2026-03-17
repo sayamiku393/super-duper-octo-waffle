@@ -1,0 +1,15 @@
+# Зависимости
+node_modules/
+vendor/
+
+# Файлы среды
+.env
+.env.local
+
+# Системные файлы
+.DS_Store
+Thumbs.db
+
+# Папки сборки
+dist/
+build/
