@@ -1,0 +1,225 @@
+from PyQt6.QtGui import QPixmap
+from PyQt6 import uic
+from PyQt6.QtWidgets import QMainWindow, QApplication, QWidget
+import sys
+from import_script import engine, text, items, insert
+
+class EditItemWindow(QMainWindow):
+    def __init__(self, parent=None):
+        super().__init__()
+        uic.loadUi('UI\product_redact.ui', self)
+        self.submit.clicked.connect(self.collect_data)
+        self.cansel.clicked.connect(self.back)
+        self.parent = parent
+
+        with engine.begin() as conn:
+            suppliers = conn.execute(text("select distinct supplier from itemz")).fetchall()
+            manufactrs = conn.execute(text("select distinct manufactr from itemz")).fetchall()
+        for s in suppliers:
+            self.supplier.addItem(s[0])
+        for m in manufactrs:
+            self.manufactr.addItem(m[0])
+
+    def back(self):
+        self.close()
+        self.parent.show()
+
+    def collect_data(self):
+        item_dict = {
+            "art": self.art.text(),
+            "model": self.model.text(),
+            "measure": self.measure.text(),
+            "price": self.price.text(),
+            "supplier": self.supplier.currentText(),
+            "manufactr": self.manufactr.currentText(),
+            "category": self.category.text(),
+            "discount": self.discount.text(),
+            "amount": self.amount.text(),
+            "descr": self.descr.toPlainText(),
+            "photopath": f"{self.photopath.text()}" if self.photopath.text() is not None else f"C:\\Users\\Neco-Tyan\\Desktop\\import\\pics\\picture.png"
+        }
+        with engine.begin() as conn:
+            conn.execute(insert(items), item_dict)
+        self.close()
+
+
+class EditOrderWindow:
+    pass
+
+
+class OrderWindow(QMainWindow):
+    def __init__(self, user, parent=None):
+        super().__init__()
+        uic.loadUi('UI\orders.ui', self)
+        self.username.setText(user)
+        self.exit_btn.clicked.connect(self.back)
+        self.to_items.clicked.connect(self.to_items_)
+        self.add_btn.clicked.connect(self.try_adding)
+        self.parent = parent
+
+    def to_items_(self):
+        self.close()
+        self.parent.show()
+
+    def back(self):
+        self.close()
+        self.window = LoginWindow()
+        self.window.show()
+
+    def try_adding(self): # кнопка добавить товар
+        self.window = EditOrderWindow(parent=self)
+        self.window.show()
+
+class ProductWindow(QWidget):
+    def __init__(self, row):
+        super().__init__()
+        uic.loadUi('UI\product.ui', self)
+        if row[7] > 0:
+            old_price = row[3]
+            new_price = row[3]*(100 - row[7])/100
+            self.price.setText(f"<s>{old_price}</s>")
+            self.disc_price.setText(f"<font color='red'>{new_price}</font>")
+        else:
+            self.price.setText(str(row[3]))
+
+        if row[7] <= 15:
+            text_html = f"""<span style="background-color:green">Скидка: {row[7]}%</span>"""
+            self.discount.setText(text_html)
+        else:
+            self.discount.setText(str(row[7])+'%')
+
+        if row[8] == 0:
+            text_html = f"""<span style="background-color:blue">{row[8]}</span>"""
+            self.amt.setText(text_html)
+        else:
+            self.amt.setText(str(row[8]))
+
+        self.model.setText(row[1])
+        self.measure.setText(row[2])
+        # self.price.setText(str(row[3]))
+        self.supplier.setText(row[4])
+        self.manufactr.setText(row[5])
+        self.category.setText(row[6])
+        # self.discount.setText(str(row[7])+'%')
+        # self.amt.setText(str(row[8]))
+        self.descr.setText(row[9])
+        self.image.setPixmap(QPixmap(row[10]).scaled(200, 300))
+
+        self.dlt_from_order.hide()
+        self.add_to_ord.hide()
+        self.redact.hide()
+
+class MainWindow(QMainWindow): # основное окно
+    def __init__(self, user, role):
+        super().__init__()
+        uic.loadUi('UI\main.ui', self)
+        self.username.setText(user)
+        self.exit_btn.clicked.connect(self.back)
+        self.ord_btn.clicked.connect(self.see_orders)
+        self.add_btn.clicked.connect(self.try_adding)
+        self.user = user
+
+        if role == 'Авторизированный клиент':
+            # прячет кнопки сортировки, фильтрации, перехода к окну заказа от обычных юзеров
+            self.sort_by_manuf_btn.hide()
+            self.sort_box.hide()
+            self.add_btn.hide()
+            self.ord_btn.hide()
+
+        if role != 'Администратор':
+            # прячет добавление товара от всех, кроме админа
+            self.add_btn.hide()
+
+        with engine.begin() as conn:
+            # для фильтра по поставщикам
+            suppliers = conn.execute(text("select distinct supplier from itemz")).fetchall()
+        for s in suppliers:
+            self.sort_by_manuf_btn.addItem(s[0])
+
+        # подгрузка товаров
+        self.search_reload()
+        self.search_area.textChanged.connect(self.search_reload)
+        self.sort_box.currentTextChanged.connect(self.search_reload)
+        self.sort_by_manuf_btn.currentTextChanged.connect(self.search_reload)
+        self.add_to_order.hide()
+
+    def back(self):
+        self.close()
+        self.window = LoginWindow()
+        self.window.show()
+
+    def realize_search(self, content, filtr, sorter):
+        ask_arr = []
+        sort = ''
+        where_st = ''
+        # формирование условия для запроса в бд
+        if len(content) > 0:
+            ask_arr.append(f"art ilike '%{content}%' or descr ilike '%{content}%' or supplier ilike '%{content}%' or manufactr ilike '%{content}%' or model ilike '%{content}%'")
+        if filtr != 'Все поставщики':
+            ask_arr.append(f"supplier = '{filtr}'")
+        if sorter == 'По возрастанию':
+            sort = 'asc'
+        if sorter == 'По убыванию':
+            sort = 'desc'
+        if len(ask_arr) > 0:
+            where_st = "where " + " and ".join(ask_arr)
+        if len(sort) > 0:
+            where_st = where_st + f" order by amount {sort}"
+        with engine.begin() as conn:
+            result = conn.execute(text(f"select * from itemz {where_st}")).fetchall()
+        return result
+
+    def search_reload(self):
+        # сбор параметров и вызов сборщика запроса
+        content = self.search_area.toPlainText().strip()
+        filtr = self.sort_by_manuf_btn.currentText()
+        sorter = self.sort_box.currentText()
+        result = self.realize_search(content, filtr, sorter)
+
+        while self.scroll_layout.count():
+            self.scroll_layout.takeAt(0).widget().deleteLater()
+
+        for row in result:
+            product = ProductWindow(row)
+            self.scroll_layout.addWidget(product)
+
+    def try_adding(self): # кнопка добавить товар
+        self.window = EditItemWindow(parent=self)
+        self.window.show()
+
+    def see_orders(self): # кнопка перехода к заказам
+        self.close()
+        self.window = OrderWindow(self.user, parent=self)
+        self.window.show()
+
+class LoginWindow(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        uic.loadUi('UI\login.ui', self)
+        self.err.hide()
+        self.enter_btn.clicked.connect(self.login_)
+        self.guest_btn.clicked.connect(self.login_guest)
+
+    def login_(self):
+        login = self.login_edit.text()
+        password = self.password_edit.text()
+        with engine.begin() as conn:
+            result = conn.execute(text(f"select fio, role from userz where login = '{login}' and password = '{password}'")).fetchone()
+        if result is not None:
+            self.close()
+            # передает фио (для надписи в углу экрана) и роль (для определения уровня доступа)
+            self.window = MainWindow(result[0], result[1])
+            self.window.show()
+        else:
+            self.err.show()
+
+    def login_guest(self):
+        self.close()
+        self.window = MainWindow('guest', 'Авторизированный клиент')
+        self.window.show()
+
+if __name__ == '__main__':
+    app = QApplication(sys.argv)
+    window = LoginWindow()
+    window.show()
+    sys.exit(app.exec())
