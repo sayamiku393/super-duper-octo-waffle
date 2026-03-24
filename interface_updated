@@ -4,76 +4,59 @@ from PyQt6.QtWidgets import QMainWindow, QApplication, QWidget
 import sys
 from import_script import engine, text, items, insert
 
-class EditItemWindow(QMainWindow):
-    def __init__(self, parent=None):
+
+class LoginWindow(QMainWindow): ### parameters: >>> username, role; <<< None
+    def __init__(self):
         super().__init__()
-        uic.loadUi('UI\product_redact.ui', self)
-        self.submit.clicked.connect(self.collect_data)
-        self.cansel.clicked.connect(self.back)
-        self.parent = parent
+        uic.loadUi('UI\login.ui', self)
 
+        self.err.hide()
+        self.enter_btn.clicked.connect(self.login_)
+        self.guest_btn.clicked.connect(self.guest)
+
+    def login_(self):
+        login = self.login_edit.text()
+        password = self.password_edit.text()
         with engine.begin() as conn:
-            suppliers = conn.execute(text("select distinct supplier from itemz")).fetchall()
-            manufactrs = conn.execute(text("select distinct manufactr from itemz")).fetchall()
-        for s in suppliers:
-            self.supplier.addItem(s[0])
-        for m in manufactrs:
-            self.manufactr.addItem(m[0])
+            result = conn.execute(text(f"select fio, role from userz where login = '{login}' and password = '{password}'")).fetchone()
+        if result is not None:
+            self.close()
+            # передает фио (для надписи в углу экрана) и роль (для определения уровня доступа)
+            self.window = ItemsWindow(result[0], result[1])
+            self.window.show()
+        else:
+            self.err.show()
 
-    def back(self):
+    def guest(self):
         self.close()
-        self.parent.show()
-
-    def collect_data(self):
-        item_dict = {
-            "art": self.art.text(),
-            "model": self.model.text(),
-            "measure": self.measure.text(),
-            "price": self.price.text(),
-            "supplier": self.supplier.currentText(),
-            "manufactr": self.manufactr.currentText(),
-            "category": self.category.text(),
-            "discount": self.discount.text(),
-            "amount": self.amount.text(),
-            "descr": self.descr.toPlainText(),
-            "photopath": f"{self.photopath.text()}" if self.photopath.text() is not None else f"C:\\Users\\Neco-Tyan\\Desktop\\import\\pics\\picture.png"
-        }
-        with engine.begin() as conn:
-            conn.execute(insert(items), item_dict)
-        self.close()
-
-
-class EditOrderWindow:
-    pass
-
-
-class OrderWindow(QMainWindow):
-    def __init__(self, user, parent=None):
-        super().__init__()
-        uic.loadUi('UI\orders.ui', self)
-        self.username.setText(user)
-        self.exit_btn.clicked.connect(self.back)
-        self.to_items.clicked.connect(self.to_items_)
-        self.add_btn.clicked.connect(self.try_adding)
-        self.parent = parent
-
-    def to_items_(self):
-        self.close()
-        self.parent.show()
-
-    def back(self):
-        self.close()
-        self.window = LoginWindow()
+        self.window = ItemsWindow('guest', 'Авторизированный клиент')
         self.window.show()
 
-    def try_adding(self): # кнопка добавить товар
-        self.window = EditOrderWindow(parent=self)
-        self.window.show()
-
-class ProductWindow(QWidget):
-    def __init__(self, row):
+class ItemWidget(QWidget):
+    def __init__(self, row, order_id=None):
         super().__init__()
         uic.loadUi('UI\product.ui', self)
+        self.get_info(row)
+
+        self.dlt_from_order.hide()
+        self.add_to_ord.hide()
+        self.redact.hide()
+
+    ### Buttons ###
+
+    def delete_(self, row, order_id):
+        pass
+
+    def add_(self, row, order_id):
+        pass
+
+    def edit_(self, row):
+        self.close()
+        self.window = ItemRedact(parent=self, art=self.row[0])
+        self.window.show()
+    ### Interface ###
+
+    def get_info(self, row):
         if row[7] > 0:
             old_price = row[3]
             new_price = row[3]*(100 - row[7])/100
@@ -109,26 +92,173 @@ class ProductWindow(QWidget):
         self.add_to_ord.hide()
         self.redact.hide()
 
-class MainWindow(QMainWindow): # основное окно
-    def __init__(self, user, role):
+class OrderWidget(QWidget):
+    def __init__(self):
+        super().__init__()
+
+
+    ### Buttons ###
+
+    def back_(self):
+        pass
+
+    def to_items(self):
+        pass
+
+    def get_info(self):
+        pass
+
+class ItemRedact(QMainWindow):
+    def __init__(self, parent=None, art=None):
+        super().__init__()
+        uic.loadUi('UI\product_redact.ui', self)
+        self.parent = parent
+        self.art = art
+
+        self.submit.clicked.connect(self.submit_())
+        self.cancel.clicked.connect(self.cancel_())
+
+        ### Interface drawing ###
+
+        self.load_filters()
+        self.err.hide()
+        if self.art is not None:
+            self.load_data()
+
+### Buttons ###
+
+    def submit_(self):
+        self.err.hide()
+        item_dict = self.gather_info()
+        try:
+            with engine.begin() as conn:
+                if self.art is not None:
+                    conn.execute(text(f"update items "
+                                      f"set model = {item_dict['model']}, "
+                                      f"set model = {item_dict['model']}, "
+                                      f"set price = {item_dict['price']}, "
+                                      f"set supplier = {item_dict['supplier']}, "
+                                      f"set manufactr = {item_dict['manufactr']}, "
+                                      f"set category = {item_dict['category']}, "
+                                      f"set discount = {item_dict['discount']}, "
+                                      f"set amt = {item_dict['amt']}, "
+                                      f"set descr = {item_dict['descr']}, "
+                                      f"set photopath = {item_dict['photopath']} "
+                                      f"where art = {self.art}"))
+                else:
+                    conn.execute(insert(items), item_dict)
+            self.close()
+            self.parent.show()
+        except:
+            self.err.show()
+
+    def cancel_(self):
+        self.close()
+        self.parent.show()
+
+    ### Interface ###
+
+    def load_filters(self):
+        with engine.begin() as conn:
+            suppliers = conn.execute(text("select distinct supplier from itemz")).fetchall()
+            manufactrs = conn.execute(text("select distinct manufactr from itemz")).fetchall()
+        for s in suppliers:
+            self.supplier.addItem(s[0])
+        for m in manufactrs:
+            self.manufactr.addItem(m[0])
+
+    def load_data(self):
+        with engine.begin() as conn:
+            result = conn.execute(text(f"select * from items where art = {self.art}")).fetchone()
+        self.art.setText(result[0])
+        self.model.setText(result[1])
+        self.category.setText(result[6])
+        self.descr.setText(result[9])
+        self.supplier.setText(result[4])
+        self.manufactr.setText(result[5])
+        self.price.setText(result[3])
+        self.measure.setText(result[2])
+        self.amt.setText(result[8])
+        self.photopath.setText(result[10])
+
+    def gather_info(self):
+        item_dict = {
+            "art": self.art.text(),
+            "model": self.model.text(),
+            "measure": self.measure.text(),
+            "price": self.price.text(),
+            "supplier": self.supplier.currentText(),
+            "manufactr": self.manufactr.currentText(),
+            "category": self.category.text(),
+            "discount": self.discount.text(),
+            "amount": self.amount.text(),
+            "descr": self.descr.toPlainText(),
+            "photopath": f"{self.photopath.text()}" if self.photopath.text() is not None else f"C:\\Users\\Neco-Tyan\\Desktop\\import\\pics\\picture.png"
+        }
+        return item_dict
+
+class OrderRedact(QMainWindow):
+    def __init__(self, parent=None):
+        super().__init__()
+        uic.loadUi('UI\order_redact.ui', self)
+
+        self.parent = parent
+        self.id_ = self.get_new_id() + 1
+        self.id.setText(str(self.id_))
+
+        self.add_items.clicked(self.add_items_())
+        self.cancel.clicked(self.cancel_())
+
+    ### Buttons ###
+
+    def add_items_(self):
+        dict = self.gather_info()
+        self.close()
+        self.window = AddItemsToOrder(self.parent, dict, order_id=self.id_)
+        self.window.show()
+
+    def cancel_(self):
+        self.close()
+        self.parent.show()
+
+    ### Interface ###
+    def get_new_id(self):
+        with engine.begin() as conn:
+            return conn.execute("select count(*) from orders").fetchone()[0]
+
+    def call_id(self, fio):
+        with engine.begin() as conn:
+            result = conn.execute(text(f"select id from userz where fio = \'{fio}\'")).fetchone()
+        return result[0]
+
+    def gather_info(self):
+        user_id = self.call_id(self.user_fio.text())
+        ord_dict = {
+            "ord_date": self.ord_date.text(),
+            "del_date": self.del_date.text(),
+            "point_id": self.point_id.text(),
+            "client_id": user_id,
+            "code": self.code.text(),
+            "status": self.status.text()
+            }
+        return ord_dict
+
+class ItemsWindow(QMainWindow):
+    def __init__(self, user_name, role):
         super().__init__()
         uic.loadUi('UI\main.ui', self)
-        self.username.setText(user)
-        self.exit_btn.clicked.connect(self.back)
-        self.ord_btn.clicked.connect(self.see_orders)
-        self.add_btn.clicked.connect(self.try_adding)
-        self.user = user
 
-        if role == 'Авторизированный клиент':
-            # прячет кнопки сортировки, фильтрации, перехода к окну заказа от обычных юзеров
-            self.sort_by_manuf_btn.hide()
-            self.sort_box.hide()
-            self.add_btn.hide()
-            self.ord_btn.hide()
+        self.exit_btn.clicked.connect(self.exit_)
+        self.ord_btn.clicked.connect(self.to_other)
+        self.add_btn.clicked.connect(self.add_item)
 
-        if role != 'Администратор':
-            # прячет добавление товара от всех, кроме админа
-            self.add_btn.hide()
+        ### Interface drawing ###
+
+        self.user = user_name
+        self.username.setText(user_name)
+
+        self.add_btn.hide()
+        self.finalize_order.hide()
 
         with engine.begin() as conn:
             # для фильтра по поставщикам
@@ -136,19 +266,46 @@ class MainWindow(QMainWindow): # основное окно
         for s in suppliers:
             self.sort_by_manuf_btn.addItem(s[0])
 
-        # подгрузка товаров
-        self.search_reload()
-        self.search_area.textChanged.connect(self.search_reload)
-        self.sort_box.currentTextChanged.connect(self.search_reload)
-        self.sort_by_manuf_btn.currentTextChanged.connect(self.search_reload)
-        self.add_to_order.hide()
+        self.reload_()
+        self.search_area.textChanged.connect(self.reload_)
+        self.sort_box.currentTextChanged.connect(self.reload_)
+        self.sort_by_manuf_btn.currentTextChanged.connect(self.reload_)
 
-    def back(self):
+        ### Privileges ###
+
+        if role == 'Авторизированный клиент':
+            self.sort_by_manuf_btn.hide()
+            self.sort_box.hide()
+            self.add_btn.hide()
+            self.ord_btn.hide()
+
+        if role != 'Администратор':
+            self.add_btn.hide()
+
+    ### Buttons ###
+
+    def exit_(self):
         self.close()
         self.window = LoginWindow()
         self.window.show()
 
-    def realize_search(self, content, filtr, sorter):
+    def add_item(self):
+        self.window = ItemRedact(parent=self)
+        self.window.show()
+
+    def to_other(self):
+        self.close()
+        self.window = OrdersWindow(self.user, parent=self)
+        self.window.show()
+
+    ### For editor ###
+
+    def confirm_(self):
+        pass
+
+    ### Interface ###
+
+    def form_quiery(self, content, filtr, sorter):
         ask_arr = []
         sort = ''
         where_st = ''
@@ -169,54 +326,75 @@ class MainWindow(QMainWindow): # основное окно
             result = conn.execute(text(f"select * from itemz {where_st}")).fetchall()
         return result
 
-    def search_reload(self):
-        # сбор параметров и вызов сборщика запроса
+    def reload_(self):
         content = self.search_area.toPlainText().strip()
         filtr = self.sort_by_manuf_btn.currentText()
         sorter = self.sort_box.currentText()
-        result = self.realize_search(content, filtr, sorter)
+        result = self.form_quiery(content, filtr, sorter)
 
         while self.scroll_layout.count():
             self.scroll_layout.takeAt(0).widget().deleteLater()
 
         for row in result:
-            product = ProductWindow(row)
+            product = ItemWidget(row)
             self.scroll_layout.addWidget(product)
 
-    def try_adding(self): # кнопка добавить товар
-        self.window = EditItemWindow(parent=self)
-        self.window.show()
-
-    def see_orders(self): # кнопка перехода к заказам
-        self.close()
-        self.window = OrderWindow(self.user, parent=self)
-        self.window.show()
-
-class LoginWindow(QMainWindow):
+class AddItemsToOrder(ItemsWindow):
     def __init__(self):
         super().__init__()
-        uic.loadUi('UI\login.ui', self)
-        self.err.hide()
-        self.enter_btn.clicked.connect(self.login_)
-        self.guest_btn.clicked.connect(self.login_guest)
 
-    def login_(self):
-        login = self.login_edit.text()
-        password = self.password_edit.text()
-        with engine.begin() as conn:
-            result = conn.execute(text(f"select fio, role from userz where login = '{login}' and password = '{password}'")).fetchone()
-        if result is not None:
-            self.close()
-            # передает фио (для надписи в углу экрана) и роль (для определения уровня доступа)
-            self.window = MainWindow(result[0], result[1])
-            self.window.show()
-        else:
-            self.err.show()
+    ### Interface ###
+    def add_item_to_order(self):
+        pass
 
-    def login_guest(self):
+class OrdersWindow(QMainWindow):
+    def __init__(self, user, parent=None):
+        super().__init__()
+        uic.loadUi('UI\orders.ui', self)
+
+        self.username.setText(user)
+        self.parent = parent
+
+        self.exit_btn.clicked.connect(self.exit_)
+        self.to_items.clicked.connect(self.to_other)
+        self.add_btn.clicked.connect(self.add_order)
+
+    ### Buttons ###
+
+    def to_other(self):
         self.close()
-        self.window = MainWindow('guest', 'Авторизированный клиент')
+        self.parent.show()
+
+    def add_order(self):
+        self.window = OrderRedact(parent=self)
         self.window.show()
+
+    def exit_(self):
+        self.close()
+        self.window = LoginWindow()
+        self.window.show()
+
+    ### Interface ###
+
+    def form_quiery(self, content):
+        where_st = ''
+        # формирование условия для запроса в бд
+        if len(content) > 0:
+            where_st = f"art ilike '%{content}%' or descr ilike '%{content}%' or supplier ilike '%{content}%' or manufactr ilike '%{content}%' or model ilike '%{content}%'"
+        with engine.begin() as conn:
+            result = conn.execute(text(f"select * from itemz {where_st}")).fetchall()
+        return result
+
+    def reload_(self):
+        content = self.search_area.toPlainText().strip()
+        result = self.form_quiery(content)
+
+        while self.scroll_layout.count():
+            self.scroll_layout.takeAt(0).widget().deleteLater()
+
+        for row in result:
+            product = ItemWidget(row)
+            self.scroll_layout.addWidget(product)
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
